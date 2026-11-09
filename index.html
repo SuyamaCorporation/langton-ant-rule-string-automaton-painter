@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>ラングトンのアリ ルール文字列オートマトン</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-white min-h-screen flex flex-col items-center p-4">
+<h1 class="text-2xl font-bold mb-1 text-center">🐜 ラングトンのアリ</h1>
+<p class="text-gray-400 text-sm mb-3 text-center">ルール文字列を変えて創発パターンを探索</p>
+<canvas id="c" class="rounded mb-3" style="max-width:100%;image-rendering:pixelated"></canvas>
+<div class="flex flex-wrap gap-3 justify-center mb-3">
+  <label class="text-xs text-gray-300 flex flex-col items-center">
+    ルール文字列 (R=右回り, L=左回り)
+    <input id="rule" type="text" value="RL" maxlength="10"
+      class="mt-1 bg-gray-800 border border-gray-600 rounded px-3 py-1 text-sm font-mono w-32 text-center uppercase">
+  </label>
+  <label class="text-xs text-gray-300 flex flex-col items-center">
+    アリの数
+    <select id="antCount" class="mt-1 bg-gray-800 border border-gray-600 rounded px-2 py-1 text-sm">
+      <option value="1">1匹</option>
+      <option value="2">2匹</option>
+      <option value="4">4匹</option>
+    </select>
+  </label>
+  <label class="text-xs text-gray-300 flex flex-col items-center">
+    速度
+    <input type="range" id="speed" min="1" max="5" value="3" class="w-24 mt-1">
+    <span id="speedVal">3</span>
+  </label>
+</div>
+<div class="flex gap-3 mb-3">
+  <button id="startBtn" class="bg-green-600 hover:bg-green-500 px-5 py-2 rounded font-bold transition">▶ 開始</button>
+  <button id="resetBtn" class="bg-gray-700 hover:bg-gray-600 px-5 py-2 rounded font-bold transition">↺ リセット</button>
+</div>
+<div id="stats" class="text-xs text-gray-500 font-mono"></div>
+<div class="mt-2 text-xs text-gray-600 text-center">
+  試してみて: RL(ハイウェイ) / LLRR(フラクタル) / LRRRRRLLR(ミラー対称) / LLLRRRLLR
+</div>
+<script>
+const GRID=200;
+const cv=document.getElementById('c');
+const ctx=cv.getContext('2d');
+cv.width=GRID; cv.height=GRID;
+cv.style.width=cv.style.height=Math.min(window.innerWidth-32,560)+'px';
+
+let grid,ants,img,running,animId,step;
+const antColors=['#ff4','#4f4','#f84','#48f'];
+
+function getRuleStr(){ return document.getElementById('rule').value.toUpperCase().replace(/[^RL]/g,'') || 'RL'; }
+
+function init(){
+  const ruleStr=getRuleStr();
+  const nColors=ruleStr.length;
+  grid=new Uint8Array(GRID*GRID);
+  img=ctx.createImageData(GRID,GRID);
+  img.data.fill(0);
+  for(let i=3;i<img.data.length;i+=4) img.data[i]=255;
+
+  const nAnts=parseInt(document.getElementById('antCount').value);
+  ants=[];
+  const dirs=[[0,-1],[1,0],[0,1],[-1,0]]; // N,E,S,W
+  for(let i=0;i<nAnts;i++){
+    const ang=i/nAnts*Math.PI*2;
+    ants.push({
+      x:(GRID/2+Math.cos(ang)*5)|0,
+      y:(GRID/2+Math.sin(ang)*5)|0,
+      d:i%4,
+      color:antColors[i]
+    });
+  }
+  step=0;
+  renderAll();
+}
+
+function colorOf(state, nColors){
+  const t=state/Math.max(nColors-1,1);
+  const r=Math.round(20+t*230), g=Math.round(20+t*220), b=Math.round(80+t*150);
+  return [r,g,b];
+}
+
+function setPixel(x,y,state,nColors){
+  const idx=(y*GRID+x)*4;
+  if(state===0){ img.data[idx]=15;img.data[idx+1]=15;img.data[idx+2]=25; }
+  else { const [r,g,b]=colorOf(state,nColors); img.data[idx]=r;img.data[idx+1]=g;img.data[idx+2]=b; }
+}
+
+function renderAll(){
+  const ruleStr=getRuleStr();
+  const nColors=ruleStr.length;
+  for(let i=0;i<GRID*GRID;i++){
+    const x=i%GRID, y=(i/GRID)|0;
+    setPixel(x,y,grid[i],nColors);
+  }
+  ctx.putImageData(img,0,0);
+}
+
+function tickMany(n){
+  const ruleStr=getRuleStr();
+  const nColors=ruleStr.length;
+  for(let _=0;_<n;_++){
+    for(let ant of ants){
+      const idx=ant.y*GRID+ant.x;
+      const state=grid[idx];
+      const turn=ruleStr[state]==='R'?1:-1;
+      ant.d=(ant.d+4+turn)%4;
+      grid[idx]=(state+1)%nColors;
+      setPixel(ant.x,ant.y,grid[idx],nColors);
+      ant.x=(ant.x+[[0,1,0,-1],[ant.d===1?1:ant.d===3?-1:0]][0][ant.d]+GRID)%GRID;
+      ant.y=(ant.y+[ant.d===2?1:ant.d===0?-1:0,0][0]+GRID)%GRID;
+    }
+    step++;
+  }
+  ctx.putImageData(img,0,0);
+  document.getElementById('stats').textContent=`ステップ: ${step.toLocaleString()} | ルール: ${ruleStr} | アリ: ${ants.length}匹`;
+}
+
+// Fix ant movement
+function tickManyFixed(n){
+  const ruleStr=getRuleStr();
+  const nColors=ruleStr.length;
+  const dx=[0,1,0,-1], dy=[-1,0,1,0];
+  for(let _=0;_<n;_++){
+    for(let ant of ants){
+      const idx=ant.y*GRID+ant.x;
+      const state=grid[idx];
+      const turn=ruleStr[state]==='R'?1:-1;
+      ant.d=(ant.d+4+turn)%4;
+      grid[idx]=(state+1)%nColors;
+      setPixel(ant.x,ant.y,grid[idx],nColors);
+      ant.x=((ant.x+dx[ant.d])+GRID)%GRID;
+      ant.y=((ant.y+dy[ant.d])+GRID)%GRID;
+    }
+    step++;
+  }
+  ctx.putImageData(img,0,0);
+  document.getElementById('stats').textContent=`ステップ: ${step.toLocaleString()} | ルール: ${ruleStr} | ${ants.length}匹`;
+}
+
+const speedMap=[100,500,2000,5000,10000];
+function loop(){
+  const spd=parseInt(document.getElementById('speed').value);
+  tickManyFixed(speedMap[spd-1]);
+  animId=requestAnimationFrame(loop);
+}
+
+document.getElementById('startBtn').addEventListener('click',()=>{
+  if(running){ cancelAnimationFrame(animId); running=false; document.getElementById('startBtn').textContent='▶ 開始'; }
+  else { running=true; document.getElementById('startBtn').textContent='⏸ 停止'; loop(); }
+});
+document.getElementById('resetBtn').addEventListener('click',()=>{
+  cancelAnimationFrame(animId); running=false;
+  document.getElementById('startBtn').textContent='▶ 開始';
+  init();
+});
+document.getElementById('speed').addEventListener('input',e=>{document.getElementById('speedVal').textContent=e.target.value;});
+
+init();
+</script>
+</body>
+</html>
